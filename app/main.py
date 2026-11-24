@@ -47,7 +47,7 @@ def create_app(settings=None, store=None, ig=None, extractor=None, today=None) -
                           httpx.Client(timeout=httpx.Timeout(120.0, read=120.0)))
         if extractor is None:
             from app.extractor import Extractor
-            extractor = Extractor(settings.gemini_api_key)
+            extractor = Extractor(settings.gemini_api_key, model=settings.gemini_model)
         return settings, store, ig, extractor
 
     @app.get("/health")

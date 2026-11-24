@@ -32,12 +32,15 @@ def test_defaults_applied():
     assert s.max_video_mb == 64
     assert s.daily_user_limit == 5
     assert s.daily_spend_cap_usd == 20.0
+    assert s.gemini_model == "gemini-3.8-flash"
 
 
 def test_overrides_applied():
     s = Settings.from_env(REQUIRED | {"DB_PATH": "x.db", "MAX_VIDEO_MB": "10",
-                                      "DAILY_USER_LIMIT": "3", "DAILY_SPEND_CAP_USD": "1.5"})
+                                      "DAILY_USER_LIMIT": "3", "DAILY_SPEND_CAP_USD": "1.5",
+                                      "GEMINI_MODEL": "gemini-3.5-flash"})
     assert s.db_path == "x.db"
     assert s.max_video_mb == 10
     assert s.daily_user_limit == 3
     assert s.daily_spend_cap_usd == 1.5
+    assert s.gemini_model == "gemini-3.5-flash"

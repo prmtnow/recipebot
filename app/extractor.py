@@ -17,7 +17,10 @@ PROMPT = (
     "respond with exactly: NO_RECIPE"
 )
 
-# Published gemini-2.5-flash rates, USD per 1M tokens (2026-11).
+# Conservative flash-tier rates, USD per 1M tokens (2026-11).
+# gemini-2.5-flash was retired for new API keys; the default model is now
+# gemini-3.8-flash (GEMINI_MODEL overrides). Rates kept as-is: same
+# flash-tier published rates, used only for the spend cap.
 INPUT_RATE_PER_M = 0.30
 OUTPUT_RATE_PER_M = 2.50  # applies to output AND billed thinking tokens
 
@@ -35,11 +38,12 @@ class ExtractResult:
 class Extractor:
     """Uploads a video to the Gemini Files API and extracts a text recipe."""
 
-    def __init__(self, api_key: str, client=None):
+    def __init__(self, api_key: str, client=None, model: str = "gemini-3.8-flash"):
         if client is None:
             from google import genai
             client = genai.Client(api_key=api_key)
         self._client = client
+        self._model = model
 
     def extract(self, video: bytes, mime: str) -> ExtractResult:
         from google.genai import types
@@ -53,7 +57,7 @@ class Extractor:
             if _state(f) not in _FILE_READY_STATES:
                 return ExtractResult(None, 0.0, f"file not ready (state {_state(f)})")
             resp = self._client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=self._model,
                 contents=[types.Part.from_uri(file_uri=f.uri, mime_type=mime), PROMPT],
             )
             # Capture cost immediately: it is spent even if parsing the

@@ -80,8 +80,14 @@ def test_happy_path_returns_recipe_and_cost():
     assert r.error is None
     assert r.cost_usd > 0
     call = fake.models.calls[0]
-    assert call["model"] == "gemini-2.5-flash"
+    assert call["model"] == "gemini-3.8-flash"
     assert any("NO_RECIPE" in str(c) for c in call["contents"])
+
+
+def test_model_is_configurable():
+    fake = FakeClient(text="# R")
+    Extractor("key", client=fake, model="gemini-3.5-flash").extract(b"v", "video/mp4")
+    assert fake.models.calls[0]["model"] == "gemini-3.5-flash"
 
 
 def test_sdk_exception_yields_error_result():
