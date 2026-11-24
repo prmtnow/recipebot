@@ -18,6 +18,12 @@ def test_missing_required_var_raises():
         Settings.from_env(env)
 
 
+def test_empty_required_var_raises():
+    env = dict(REQUIRED, APP_SECRET="")
+    with pytest.raises(ValueError, match="APP_SECRET"):
+        Settings.from_env(env)
+
+
 def test_defaults_applied():
     s = Settings.from_env(REQUIRED)
     assert s.ig_access_token == "t"

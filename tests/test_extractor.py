@@ -12,6 +12,7 @@ class FakeFiles:
     def __init__(self, state="ACTIVE"):
         self.state = state
         self.uploads = []
+        self.deleted = []
 
     def upload(self, file=None, **kw):
         self.uploads.append(file)
@@ -19,6 +20,9 @@ class FakeFiles:
 
     def get(self, name=None, **kw):
         return FakeFile(self.state)
+
+    def delete(self, name=None, **kw):
+        self.deleted.append(name)
 
 
 class FakePart:
@@ -37,14 +41,18 @@ class FakeCandidate:
 
 
 class FakeUsage:
-    prompt_token_count = 5000
-    candidates_token_count = 500
+    def __init__(self, prompt=5000, output=500, thoughts=0):
+        self.prompt_token_count = prompt
+        self.candidates_token_count = output
+        self.thoughts_token_count = thoughts
 
 
 class FakeModels:
-    def __init__(self, text=None, raises=None):
+    def __init__(self, text=None, raises=None, empty_candidates=False, usage=None):
         self.text = text
         self.raises = raises
+        self.empty_candidates = empty_candidates
+        self.usage = usage
         self.calls = []
 
     def generate_content(self, **kw):
@@ -52,15 +60,16 @@ class FakeModels:
         if self.raises:
             raise self.raises
         resp = type("Resp", (), {})()
-        resp.candidates = [FakeCandidate(self.text)]
-        resp.usage_metadata = FakeUsage()
+        resp.candidates = [] if self.empty_candidates else [FakeCandidate(self.text)]
+        resp.usage_metadata = self.usage or FakeUsage()
         return resp
 
 
 class FakeClient:
-    def __init__(self, text=None, raises=None, file_state="ACTIVE"):
+    def __init__(self, text=None, raises=None, file_state="ACTIVE", empty_candidates=False,
+                 usage=None):
         self.files = FakeFiles(file_state)
-        self.models = FakeModels(text, raises)
+        self.models = FakeModels(text, raises, empty_candidates, usage)
 
 
 def test_happy_path_returns_recipe_and_cost():
@@ -94,3 +103,20 @@ def test_failed_file_state_yields_error_result():
     r = Extractor("key", client=fake).extract(b"v", "video/mp4")
     assert r.recipe is None
     assert r.error
+
+
+def test_thoughts_tokens_are_billed_at_output_rate():
+    fake = FakeClient(text="# R", usage=FakeUsage(prompt=1_000_000, output=100_000,
+                                                  thoughts=400_000))
+    r = Extractor("key", client=fake).extract(b"v", "video/mp4")
+    import pytest
+    assert r.cost_usd == pytest.approx(0.30 + 0.5 * 2.50)
+
+
+def test_cost_survives_response_parsing_failure():
+    """generate_content already spent the money before we parse its shape."""
+    fake = FakeClient(empty_candidates=True, usage=FakeUsage(prompt=1000, output=1000))
+    r = Extractor("key", client=fake).extract(b"v", "video/mp4")
+    assert r.recipe is None
+    assert r.error
+    assert r.cost_usd > 0

@@ -1,6 +1,10 @@
+import logging
 from datetime import date
 
+from app.ig_client import IGOversized
 from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, MSG_CHUNK_CHARS, SORRY_TEXT, chunk_recipe
+
+logger = logging.getLogger(__name__)
 
 
 def _video_attachment(message: dict):
@@ -33,15 +37,25 @@ class Worker:
         store, settings = self._store, self._settings
         igsid = message["sender"]["id"]
         msg = message["message"]
+        mid = msg.get("mid", "")
         day = self._today()
 
-        def reply(text, status, recipe=None, cost=0.0):
+        def record(status, recipe=None, cost=0.0):
             if cost:
                 store.add_cost(cost, day)
-            store.log_conversion(igsid, msg.get("mid", ""), status, recipe, cost)
-            self._ig.send_text(igsid, text)
+            store.log_conversion(igsid, mid, status, recipe, cost)
 
-        if not store.mark_seen(msg.get("mid", "")):
+        def send(text):
+            try:
+                self._ig.send_text(igsid, text)
+            except Exception:
+                logger.exception("reply send failed for %s", igsid)
+
+        def reply(text, status, cost=0.0):
+            record(status, cost=cost)  # bookkeeping first: spend is real even if IG is down
+            send(text)
+
+        if mid and not store.mark_seen(mid):
             return  # webhook redelivery
 
         att = _video_attachment(msg)
@@ -50,7 +64,8 @@ class Worker:
             return
         url, mime, size = att
 
-        if size and size > settings.max_video_mb * 1_048_576:
+        max_bytes = settings.max_video_mb * 1_048_576
+        if size and size > max_bytes:
             reply(SORRY_TEXT, "oversized")
             return
         if store.today_cost(day) >= settings.daily_spend_cap_usd:
@@ -60,9 +75,14 @@ class Worker:
             reply(LIMIT_TEXT, "quota")
             return
 
-        video = self._ig.download_media(url)
-        if len(video) > settings.max_video_mb * 1_048_576:
+        try:
+            video = self._ig.download_media(url, max_bytes=max_bytes)
+        except IGOversized:
             reply(SORRY_TEXT, "oversized")  # quota stays consumed: no refund-probe abuse
+            return
+        except Exception:
+            logger.exception("media download failed for %s", igsid)
+            reply(SORRY_TEXT, "error")
             return
 
         result = self._extractor.extract(video, mime)
@@ -71,8 +91,6 @@ class Worker:
             reply(SORRY_TEXT, status, cost=result.cost_usd)
             return
 
+        record("ok", result.recipe, result.cost_usd)  # count spend before sending
         for chunk in chunk_recipe(result.recipe, MSG_CHUNK_CHARS):
-            self._ig.send_text(igsid, chunk)
-        store.log_conversion(igsid, msg.get("mid", ""), "ok", result.recipe, result.cost_usd)
-        if result.cost_usd:
-            store.add_cost(result.cost_usd, day)
+            send(chunk)

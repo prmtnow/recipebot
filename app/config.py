@@ -19,7 +19,8 @@ class Settings:
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "Settings":
         missing = [k for k in
                    ("IG_ACCESS_TOKEN", "IG_ACCOUNT_ID", "APP_SECRET",
-                    "VERIFY_TOKEN", "GEMINI_API_KEY") if k not in env]
+                    "VERIFY_TOKEN", "GEMINI_API_KEY")
+                   if not env.get(k)]
         if missing:
             raise ValueError(f"missing required env vars: {', '.join(missing)}")
         return cls(

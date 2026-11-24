@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from app.ig_client import IGClient, IGError
+from app.ig_client import IGClient, IGOversized, IGError
 
 MSG_URL = "https://graph.instagram.com/v21.0/act-1/messages"
 
@@ -46,3 +46,23 @@ def test_send_text_raises_on_error_status():
     with httpx.Client() as http:
         with pytest.raises(IGError):
             IGClient("tok", "act-1", http).send_text("igsid-9", "hi")
+
+
+@respx.mock
+def test_download_media_aborts_when_body_exceeds_cap():
+    respx.get("https://cdn.example/big.mp4").mock(
+        return_value=httpx.Response(200, content=b"x" * 5000))
+    with httpx.Client() as http:
+        with pytest.raises(IGOversized):
+            IGClient("tok", "act-1", http).download_media(
+                "https://cdn.example/big.mp4", max_bytes=1000)
+
+
+@respx.mock
+def test_download_media_within_cap_returns_bytes():
+    respx.get("https://cdn.example/v.mp4").mock(
+        return_value=httpx.Response(200, content=b"vid"))
+    with httpx.Client() as http:
+        data = IGClient("tok", "act-1", http).download_media(
+            "https://cdn.example/v.mp4", max_bytes=1000)
+    assert data == b"vid"

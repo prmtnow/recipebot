@@ -19,7 +19,7 @@ class FakeIG:
         self.sent = []
         self.video = video
 
-    def download_media(self, url):
+    def download_media(self, url, max_bytes=None):
         return self.video
 
     def send_text(self, recipient_id, text):
@@ -114,3 +114,23 @@ def test_no_recipe_gets_apology_end_to_end(tmp_path):
         "X-Hub-Signature-256": sign(body), "Content-Type": "application/json"})
     assert len(ig.sent) == 1
     assert "couldn't extract" in ig.sent[0][1]
+
+
+def test_webhook_returns_200_even_when_processing_fails(tmp_path):
+    """Meta must never be asked to redeliver; failures are logged, not thrown."""
+
+    class BrokenIG(FakeIG):
+        def download_media(self, url, max_bytes=None):
+            raise RuntimeError("CDN on fire")
+
+    settings = Settings(ig_access_token="t", ig_account_id="a", app_secret=SECRET,
+                        verify_token=VERIFY, gemini_api_key="g",
+                        db_path=str(tmp_path / "bot.db"))
+    store = Store(str(tmp_path / "bot.db"))
+    app = create_app(settings, store, BrokenIG(),
+                     FakeExtractor(ExtractResult("# R", 0.1, None)), today=lambda: DAY)
+    client = TestClient(app, raise_server_exceptions=False)
+    body = json.dumps(video_payload()).encode()
+    resp = client.post("/webhook", content=body, headers={
+        "X-Hub-Signature-256": sign(body), "Content-Type": "application/json"})
+    assert resp.status_code == 200

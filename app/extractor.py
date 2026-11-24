@@ -1,5 +1,8 @@
+import logging
 import time
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 PROMPT = (
     "You are a recipe extraction engine. Watch and listen to this video.\n"
@@ -16,10 +19,10 @@ PROMPT = (
 
 # Published gemini-2.5-flash rates, USD per 1M tokens (2026-11).
 INPUT_RATE_PER_M = 0.30
-OUTPUT_RATE_PER_M = 2.50
+OUTPUT_RATE_PER_M = 2.50  # applies to output AND billed thinking tokens
 
 _FILE_READY_STATES = {"ACTIVE"}
-_FILE_WAITING_STATES = {"PROCESSING", "UNSPECIFIED", ""}
+_FILE_WAITING_STATES = {"PROCESSING", "UNSPECIFIED"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,7 @@ class Extractor:
 
     def extract(self, video: bytes, mime: str) -> ExtractResult:
         from google.genai import types
+        f = None
         try:
             f = self._client.files.upload(file=("video.mp4", video, mime))
             deadline = time.monotonic() + 600
@@ -52,13 +56,26 @@ class Extractor:
                 model="gemini-2.5-flash",
                 contents=[types.Part.from_uri(file_uri=f.uri, mime_type=mime), PROMPT],
             )
+            # Capture cost immediately: it is spent even if parsing the
+            # response shape fails below.
             cost = _cost(getattr(resp, "usage_metadata", None))
-            text = (resp.candidates[0].content.parts[0].text or "").strip()
-            if text == "NO_RECIPE":
-                return ExtractResult(None, cost, "no_recipe")
-            return ExtractResult(text, cost, None)
         except Exception as exc:  # any SDK/network failure -> apologetic reply upstream
             return ExtractResult(None, 0.0, str(exc) or type(exc).__name__)
+        finally:
+            if f is not None:
+                try:
+                    self._client.files.delete(name=f.name)
+                except Exception:
+                    logger.warning("could not delete Gemini file %s", f.name)
+        try:
+            text = (resp.candidates[0].content.parts[0].text or "").strip()
+        except Exception:
+            return ExtractResult(None, cost, "unexpected response shape")
+        if not text:
+            return ExtractResult(None, cost, "empty response")
+        if text == "NO_RECIPE":
+            return ExtractResult(None, cost, "no_recipe")
+        return ExtractResult(text, cost, None)
 
 
 def _state(f) -> str:
@@ -69,5 +86,7 @@ def _state(f) -> str:
 def _cost(usage) -> float:
     if usage is None:
         return 0.0
+    billed_output = (getattr(usage, "candidates_token_count", 0)
+                     + getattr(usage, "thoughts_token_count", 0))
     return (getattr(usage, "prompt_token_count", 0) * INPUT_RATE_PER_M
-            + getattr(usage, "candidates_token_count", 0) * OUTPUT_RATE_PER_M) / 1_000_000
+            + billed_output * OUTPUT_RATE_PER_M) / 1_000_000

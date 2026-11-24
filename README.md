@@ -54,6 +54,8 @@ early, they take weeks:
   are long-lived; dev-mode tokens expire hourly — fine while testing).
 - [ ] Webhooks: subscribe to `messages` for the account; set callback URL to
   `https://<host>/webhook` and the `VERIFY_TOKEN` you configured.
+- [ ] Settings → Message controls → Connected Tools → **Allow access to messages**
+  (the classic "webhook never fires" trap).
 - [ ] App Review: submit `instagram_business_manage_messages` with a screen
   recording of a DM video → recipe reply (a test account can DM your live bot in
   dev mode to record this).
@@ -61,6 +63,12 @@ early, they take weeks:
 
 While in development mode the bot only answers DMs from app testers/admins —
 perfect for the private beta.
+
+## Deployment notes
+
+Run **one** instance: quotas, the spend cap and dedup live in one SQLite file,
+and multi-process writes are not coordinated (fine at MVP volume, a phase-2
+item if you ever scale out).
 
 ## Status: MVP
 

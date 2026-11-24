@@ -4,6 +4,7 @@ import pytest
 
 from app.config import Settings
 from app.extractor import ExtractResult
+from app.ig_client import IGOversized
 from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, SORRY_TEXT
 from app.store import Store
 from app.worker import Worker
@@ -19,10 +20,12 @@ class FakeIG:
         self.video = video
         self.download_raises = download_raises
 
-    def download_media(self, url):
+    def download_media(self, url, max_bytes=None):
         self.downloads.append(url)
         if self.download_raises:
             raise self.download_raises
+        if max_bytes is not None and len(self.video) > max_bytes:
+            raise IGOversized("too big")
         return self.video
 
     def send_text(self, recipient_id, text):
@@ -175,3 +178,45 @@ def test_long_recipe_sends_two_chunks_in_order(tmp_path):
     texts = [t for _, t in ig.sent]
     assert len(texts) == 2
     assert recipe.split("\n") == [ln for c in texts for ln in c.split("\n") if ln]
+
+
+def test_send_failure_after_extraction_still_records_cost_and_log(tmp_path):
+    """Gemini money is spent whether or not the IG send succeeds."""
+    db = str(tmp_path / "bot.db")
+
+    class FailingIG(FakeIG):
+        def send_text(self, recipient_id, text):
+            raise RuntimeError("IG down")
+
+    store, w = build(tmp_path, ig=FailingIG())
+    w.handle_event(video_event())  # must not raise
+    assert statuses(db) == ["ok"]
+    assert store.today_cost(DAY) == pytest.approx(0.1)
+
+
+def test_download_failure_gets_sorry_and_error_log(tmp_path):
+    """Spec: failures reply with a friendly error, never silence."""
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(download_raises=RuntimeError("CDN 404"))
+    store, w = build(tmp_path, ig=ig)
+    w.handle_event(video_event())  # must not raise
+    assert ig.sent == [(IGSID, SORRY_TEXT)]
+    assert statuses(db) == ["error"]
+    assert quota_count(db) == 1
+
+
+def test_send_failure_on_guard_reply_does_not_crash(tmp_path):
+    ig = FakeIG()
+    store, w = build(tmp_path, ig=ig)
+
+    real_send = ig.send_text
+    calls = {"n": 0}
+
+    def flaky(recipient, text):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("IG down")
+        real_send(recipient, text)
+
+    ig.send_text = flaky
+    w.handle_event(text_event())  # hint send fails; must not raise
