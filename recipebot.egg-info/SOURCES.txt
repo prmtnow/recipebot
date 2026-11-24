@@ -1,0 +1,8 @@
+pyproject.toml
+app/__init__.py
+recipebot.egg-info/PKG-INFO
+recipebot.egg-info/SOURCES.txt
+recipebot.egg-info/dependency_links.txt
+recipebot.egg-info/requires.txt
+recipebot.egg-info/top_level.txt
+tests/test_main.py
