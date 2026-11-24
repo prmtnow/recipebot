@@ -4,7 +4,7 @@ import respx
 
 from app.ig_client import IGClient, IGOversized, IGError
 
-MSG_URL = "https://graph.instagram.com/v21.0/act-1/messages"
+MSG_URL = "https://graph.facebook.com/v23.0/act-1/messages"
 
 
 @respx.mock

@@ -35,7 +35,7 @@ class IGClient:
 
     def send_text(self, recipient_id: str, text: str) -> None:
         resp = self._http.post(
-            f"https://graph.instagram.com/v21.0/{self._ig_account_id}/messages",
+            f"https://graph.facebook.com/v23.0/{self._ig_account_id}/messages",
             headers={"Authorization": f"Bearer {self._token}"},
             json={"recipient": {"id": recipient_id}, "message": {"text": text}},
         )
