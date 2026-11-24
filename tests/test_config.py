@@ -32,7 +32,7 @@ def test_defaults_applied():
     assert s.max_video_mb == 64
     assert s.daily_user_limit == 5
     assert s.daily_spend_cap_usd == 20.0
-    assert s.gemini_model == "gemini-3.8-flash"
+    assert s.gemini_model == "gemini-3.6-flash"
 
 
 def test_overrides_applied():

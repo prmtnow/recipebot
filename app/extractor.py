@@ -18,9 +18,9 @@ PROMPT = (
 )
 
 # Conservative flash-tier rates, USD per 1M tokens (2026-11).
-# gemini-2.5-flash was retired for new API keys; the default model is now
-# gemini-3.8-flash (GEMINI_MODEL overrides). Rates kept as-is: same
-# flash-tier published rates, used only for the spend cap.
+# gemini-2.5-flash was retired for new API keys and gemini-3.8-flash has
+# persistent 503 demand spikes; default is gemini-3.6-flash
+# (GEMINI_MODEL overrides). Rates used only for the spend cap.
 INPUT_RATE_PER_M = 0.30
 OUTPUT_RATE_PER_M = 2.50  # applies to output AND billed thinking tokens
 
@@ -38,28 +38,53 @@ class ExtractResult:
 class Extractor:
     """Uploads a video to the Gemini Files API and extracts a text recipe."""
 
-    def __init__(self, api_key: str, client=None, model: str = "gemini-3.8-flash"):
+    def __init__(self, api_key: str, client=None, model: str = "gemini-3.6-flash",
+                 sleep=time.sleep):
         if client is None:
             from google import genai
             client = genai.Client(api_key=api_key)
         self._client = client
         self._model = model
+        self._sleep = sleep
+
+    def _generate(self, types, file_uri: str, mime: str):
+        """Model call with limited retries for transient 503/429 spikes.
+
+        A rejected call bills no tokens, so retrying is free.
+        """
+        last: Exception | None = None
+        for attempt in range(3):
+            try:
+                return self._client.models.generate_content(
+                    model=self._model,
+                    contents=[types.Part.from_uri(file_uri=file_uri, mime_type=mime),
+                              PROMPT],
+                )
+            except Exception as exc:
+                if not _transient(exc) or attempt == 2:
+                    raise
+                last = exc
+                logger.warning("transient Gemini error, retrying: %s", exc)
+                self._sleep(10 * (attempt + 1))
+        raise last  # unreachable, keeps type-checkers happy
 
     def extract(self, video: bytes, mime: str) -> ExtractResult:
+        import io
+
         from google.genai import types
         f = None
         try:
-            f = self._client.files.upload(file=("video.mp4", video, mime))
+            f = self._client.files.upload(
+                file=io.BytesIO(video),
+                config=types.UploadFileConfig(display_name="video.mp4", mime_type=mime),
+            )
             deadline = time.monotonic() + 600
             while _state(f) in _FILE_WAITING_STATES and time.monotonic() < deadline:
                 time.sleep(5)
                 f = self._client.files.get(name=f.name)
             if _state(f) not in _FILE_READY_STATES:
                 return ExtractResult(None, 0.0, f"file not ready (state {_state(f)})")
-            resp = self._client.models.generate_content(
-                model=self._model,
-                contents=[types.Part.from_uri(file_uri=f.uri, mime_type=mime), PROMPT],
-            )
+            resp = self._generate(types, f.uri, mime)
             # Capture cost immediately: it is spent even if parsing the
             # response shape fails below.
             cost = _cost(getattr(resp, "usage_metadata", None))
@@ -85,6 +110,15 @@ class Extractor:
 def _state(f) -> str:
     s = getattr(f, "state", None)
     return str(getattr(s, "value", s) or "").upper()
+
+
+def _transient(exc: Exception) -> bool:
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    if code in (429, 500, 503):
+        return True
+    msg = str(exc).upper()
+    return any(m in msg for m in ("503", "429", "UNAVAILABLE", "HIGH DEMAND",
+                                  "RATE LIMIT"))
 
 
 def _cost(usage) -> float:

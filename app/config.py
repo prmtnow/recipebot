@@ -14,7 +14,7 @@ class Settings:
     max_video_mb: int = 64
     daily_user_limit: int = 5
     daily_spend_cap_usd: float = 20.0
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.6-flash"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "Settings":
@@ -34,5 +34,5 @@ class Settings:
             max_video_mb=int(env.get("MAX_VIDEO_MB", "64")),
             daily_user_limit=int(env.get("DAILY_USER_LIMIT", "5")),
             daily_spend_cap_usd=float(env.get("DAILY_SPEND_CAP_USD", "20.0")),
-            gemini_model=env.get("GEMINI_MODEL", "gemini-3.8-flash"),
+            gemini_model=env.get("GEMINI_MODEL", "gemini-3.6-flash"),
         )
