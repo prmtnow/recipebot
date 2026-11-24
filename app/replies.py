@@ -1,5 +1,7 @@
 import re
 
+MSG_CHUNK_CHARS = 1800
+
 HINT_TEXT = ("Send me a cooking video as a DM and I'll reply with the full recipe! "
              "🍳 (max 5 videos/day)")
 SORRY_TEXT = ("Hmm, I couldn't extract a recipe from that video. Make sure it's a cooking video "
