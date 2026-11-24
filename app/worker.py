@@ -41,6 +41,7 @@ class Worker:
         day = self._today()
 
         def record(status, recipe=None, cost=0.0):
+            logger.info("conversion %s for %s (cost %.4f)", status, igsid, cost)
             if cost:
                 store.add_cost(cost, day)
             store.log_conversion(igsid, mid, status, recipe, cost)

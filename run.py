@@ -1,9 +1,13 @@
+import logging
 import os
 
 import uvicorn
 
 from app.config import Settings
 from app.main import create_app
+
+# Emit app logs (uvicorn configures only its own loggers).
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 # Fail fast at startup on missing configuration.
 app = create_app(Settings.from_env())
