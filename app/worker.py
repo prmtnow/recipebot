@@ -44,14 +44,16 @@ class Worker:
             self._http = httpx.Client(timeout=15.0)
         return resolve_media_id(link, self._http)
 
-    def _reel_play_url(self, media_id: str | None) -> str | None:
-        """Playable URL for a reel media id, or None when it can't be read."""
-        if media_id is None:
-            return None
-        media = self._ig.get_media(media_id)
-        if not media or media.get("media_type") not in ("VIDEO", "REEL"):
-            return None
-        return media.get("media_url")
+    def _reel_play_url(self, media_ids) -> str | None:
+        """Playable URL for the first candidate media id Graph can read.
+        (DM payload ids and oEmbed ids live in different id spaces, and under
+        Standard Access we cannot tell in advance which one the API accepts.)
+        """
+        for media_id in media_ids:
+            media = self._ig.get_media(media_id) if media_id else None
+            if media and media.get("media_type") in ("VIDEO", "REEL"):
+                return media.get("media_url")
+        return None
 
     def handle_event(self, message: dict) -> None:
         store, settings = self._store, self._settings
@@ -81,19 +83,23 @@ class Worker:
 
         att = _video_attachment(msg)
         if att is None:
-            # A reel reference comes either as a permalink (pasted link, or the
-            # url inside a forwarded ig_reel attachment) or as a bare media id
-            # in the payload. The permalink goes through the verified public
-            # oEmbed lookup; the payload's own id (reel_video_id) lives in a
-            # different id space and is only a fallback.
-            media_id = find_media_id(msg)
+            # A reel reference arrives either as a media id inside a forwarded
+            # ig_reel attachment, and/or as a permalink (in the text or in the
+            # attachment's url field). The two ids name the same reel in
+            # different id spaces, so offer every candidate to the Graph API.
+            candidates = []
+            payload_id = find_media_id(msg)
+            if payload_id:
+                candidates.append(payload_id)
             link = find_reel_link(msg)
-            if link is None and media_id is None:
+            if link is None and not candidates:
                 reply(HINT_TEXT, "non_video")
                 return
             if link is not None:
-                media_id = self._oembed_media_id(link) or media_id
-            url = self._reel_play_url(media_id)
+                oembed_id = self._oembed_media_id(link)
+                if oembed_id and oembed_id not in candidates:
+                    candidates.append(oembed_id)
+            url = self._reel_play_url(candidates)
             if url is None:
                 reply(REEL_UNAVAILABLE_TEXT, "reel_unavailable")
                 return

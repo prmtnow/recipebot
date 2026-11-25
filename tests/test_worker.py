@@ -15,13 +15,14 @@ IGSID = "igsid-1"
 
 
 class FakeIG:
-    def __init__(self, video=b"real-video", download_raises=None, media=None):
+    def __init__(self, video=b"real-video", download_raises=None, media=None, media_map=None):
         self.sent = []
         self.downloads = []
         self.media_lookups = []
         self.video = video
         self.download_raises = download_raises
-        self.media = media  # dict returned by get_media, or None
+        self.media = media      # dict returned by get_media, or None
+        self.media_map = media_map  # per-id answers, win over `media` when set
 
     def download_media(self, url, max_bytes=None):
         self.downloads.append(url)
@@ -33,6 +34,8 @@ class FakeIG:
 
     def get_media(self, media_id):
         self.media_lookups.append(media_id)
+        if self.media_map is not None:
+            return self.media_map.get(media_id)
         return self.media
 
     def send_text(self, recipient_id, text):
@@ -272,18 +275,29 @@ REEL_MEDIA = {"media_type": "VIDEO", "media_url": "https://cdn.example/reel.mp4"
               "username": "brendan_pang"}
 
 
-def test_forwarded_reel_prefers_permalink_via_oembed(tmp_path):
+def test_forwarded_reel_tries_payload_id_first(tmp_path):
     db = str(tmp_path / "bot.db")
     ig = FakeIG(media=REEL_MEDIA)
     http = FakeOembedHttp()
     store, w = build(tmp_path, ig=ig, http=http)
     w.handle_event(forwarded_reel_event())
     assert http.urls[0][1] == {"url": "https://www.instagram.com/reel/DX8u27dy3aQ/"}
-    assert ig.media_lookups == ["3806735077687302895"]  # canonical id from oEmbed
+    assert ig.media_lookups == ["18071458121310205"]  # first candidate readable
     assert ig.downloads == ["https://cdn.example/reel.mp4"]
     assert ig.sent == [(IGSID, "🍳 Opskrift")]
     assert statuses(db) == ["ok"]
     assert quota_count(db) == 1
+
+
+def test_forwarded_reel_falls_through_to_oembed_id(tmp_path):
+    """DM payload id unreadable -> the canonical oEmbed id gets its turn."""
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(media_map={"18071458121310205": None,
+                           "3806735077687302895": REEL_MEDIA})
+    store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())
+    w.handle_event(forwarded_reel_event())
+    assert ig.media_lookups == ["18071458121310205", "3806735077687302895"]
+    assert statuses(db) == ["ok"]
 
 
 def test_forwarded_reel_without_url_falls_back_to_payload_id(tmp_path):
