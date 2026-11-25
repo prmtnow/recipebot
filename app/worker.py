@@ -2,7 +2,7 @@ import logging
 from datetime import date
 
 from app.ig_client import IGOversized
-from app.reels import find_reel_link, resolve_media_id
+from app.reels import find_media_id, find_reel_link, resolve_media_id
 from app.replies import (BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, REEL_UNAVAILABLE_TEXT,
                          SORRY_TEXT, format_recipe)
 
@@ -36,13 +36,16 @@ class Worker:
         self._today = today or (lambda: date.today().isoformat())
         self._http = http  # for public oEmbed lookups; created lazily
 
-    def _resolve_reel(self, link: str) -> str | None:
-        """Playable URL for a reel permalink, or None when it can't be read."""
+    def _oembed_media_id(self, link: str) -> str | None:
+        """Resolve a pasted permalink to a media id via public oEmbed."""
         if self._http is None:
             import httpx
 
             self._http = httpx.Client(timeout=15.0)
-        media_id = resolve_media_id(link, self._http)
+        return resolve_media_id(link, self._http)
+
+    def _reel_play_url(self, media_id: str | None) -> str | None:
+        """Playable URL for a reel media id, or None when it can't be read."""
         if media_id is None:
             return None
         media = self._ig.get_media(media_id)
@@ -78,11 +81,19 @@ class Worker:
 
         att = _video_attachment(msg)
         if att is None:
+            # A reel reference comes either as a permalink (pasted link, or the
+            # url inside a forwarded ig_reel attachment) or as a bare media id
+            # in the payload. The permalink goes through the verified public
+            # oEmbed lookup; the payload's own id (reel_video_id) lives in a
+            # different id space and is only a fallback.
+            media_id = find_media_id(msg)
             link = find_reel_link(msg)
-            if link is None:
+            if link is None and media_id is None:
                 reply(HINT_TEXT, "non_video")
                 return
-            url = self._resolve_reel(link)
+            if link is not None:
+                media_id = self._oembed_media_id(link) or media_id
+            url = self._reel_play_url(media_id)
             if url is None:
                 reply(REEL_UNAVAILABLE_TEXT, "reel_unavailable")
                 return

@@ -253,44 +253,79 @@ def test_send_failure_on_guard_reply_does_not_crash(tmp_path):
     w.handle_event(text_event())  # hint send fails; must not raise
 
 
-def reel_event(url="https://www.instagram.com/reel/ABC123/"):
+def forwarded_reel_event():
+    """Shape captured from the real webhook (2026-11-25): ig_reel attachment
+    carries a direct reel_video_id and the caption in `title`."""
     return {"sender": {"id": IGSID}, "message": {
-        "mid": "m1", "text": "hittade den här!",
-        "attachments": [{"type": "share", "payload": {"url": url}}]}}
+        "mid": "m1",
+        "attachments": [{"type": "ig_reel", "payload": {
+            "reel_video_id": "18071458121310205",
+            "url": "https://www.instagram.com/reel/DX8u27dy3aQ/",
+            "title": "GINGER & SPRING ONION POACHED CHICKEN ..."}}]}}
+
+
+def pasted_link_event(url="https://www.instagram.com/reel/ABC123/"):
+    return {"sender": {"id": IGSID}, "message": {"mid": "m1", "text": f"titta {url}"}}
 
 
 REEL_MEDIA = {"media_type": "VIDEO", "media_url": "https://cdn.example/reel.mp4",
               "username": "brendan_pang"}
 
 
-def test_forwarded_reel_resolves_downloads_and_replies(tmp_path):
+def test_forwarded_reel_prefers_permalink_via_oembed(tmp_path):
     db = str(tmp_path / "bot.db")
     ig = FakeIG(media=REEL_MEDIA)
     http = FakeOembedHttp()
     store, w = build(tmp_path, ig=ig, http=http)
-    w.handle_event(reel_event())
-    assert http.urls[0][1] == {"url": "https://www.instagram.com/reel/ABC123/"}
-    assert ig.media_lookups == ["3806735077687302895"]
+    w.handle_event(forwarded_reel_event())
+    assert http.urls[0][1] == {"url": "https://www.instagram.com/reel/DX8u27dy3aQ/"}
+    assert ig.media_lookups == ["3806735077687302895"]  # canonical id from oEmbed
     assert ig.downloads == ["https://cdn.example/reel.mp4"]
     assert ig.sent == [(IGSID, "🍳 Opskrift")]
     assert statuses(db) == ["ok"]
     assert quota_count(db) == 1
 
 
-def test_pasted_reel_link_works_like_forward(tmp_path):
+def test_forwarded_reel_without_url_falls_back_to_payload_id(tmp_path):
+    db = str(tmp_path / "bot.db")
     ig = FakeIG(media=REEL_MEDIA)
-    store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())
+    http = FakeOembedHttp()
+    store, w = build(tmp_path, ig=ig, http=http)
     w.handle_event({"sender": {"id": IGSID}, "message": {
-        "mid": "m1", "text": "https://www.instagram.com/reel/ZZ9_aa/"}})
+        "mid": "m1", "attachments": [{"type": "ig_reel", "payload": {
+            "reel_video_id": "18071458121310205"}}]}})
+    assert http.urls == []  # no permalink in this payload shape
+    assert ig.media_lookups == ["18071458121310205"]
+    assert statuses(db) == ["ok"]
+
+
+def test_forwarded_reel_survives_oembed_outage(tmp_path):
+    """Permalink lookup down -> the payload's own id still gets us through."""
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(media=REEL_MEDIA)
+    store, w = build(tmp_path, ig=ig, http=FakeOembedHttp(status=500, body="boom"))
+    w.handle_event(forwarded_reel_event())
+    assert ig.media_lookups == ["18071458121310205"]
+    assert statuses(db) == ["ok"]
+
+
+def test_pasted_reel_link_resolves_via_oembed(tmp_path):
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(media=REEL_MEDIA)
+    http = FakeOembedHttp()
+    store, w = build(tmp_path, ig=ig, http=http)
+    w.handle_event(pasted_link_event())
+    assert http.urls[0][1] == {"url": "https://www.instagram.com/reel/ABC123/"}
+    assert ig.media_lookups == ["3806735077687302895"]
     assert ig.sent == [(IGSID, "🍳 Opskrift")]
-    assert statuses(db := str(tmp_path / "bot.db")) == ["ok"]
+    assert statuses(db) == ["ok"]
 
 
 def test_reel_oembed_failure_gets_fallback_no_quota(tmp_path):
     db = str(tmp_path / "bot.db")
     ig = FakeIG(media=REEL_MEDIA)
     store, w = build(tmp_path, ig=ig, http=FakeOembedHttp(status=404, body="nope"))
-    w.handle_event(reel_event())
+    w.handle_event(pasted_link_event())
     assert ig.sent == [(IGSID, REEL_UNAVAILABLE_TEXT)]
     assert ig.media_lookups == []
     assert quota_count(db) == 0
@@ -301,7 +336,7 @@ def test_reel_unreadable_media_gets_fallback(tmp_path):
     db = str(tmp_path / "bot.db")
     ig = FakeIG(media=None)  # private account / Standard Access / deleted post
     store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())
-    w.handle_event(reel_event())
+    w.handle_event(forwarded_reel_event())
     assert ig.sent == [(IGSID, REEL_UNAVAILABLE_TEXT)]
     assert statuses(db) == ["reel_unavailable"]
 
@@ -310,7 +345,7 @@ def test_reel_image_post_gets_fallback(tmp_path):
     db = str(tmp_path / "bot.db")
     ig = FakeIG(media={"media_type": "IMAGE", "media_url": "https://cdn.example/i.jpg"})
     store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())
-    w.handle_event(reel_event())
+    w.handle_event(forwarded_reel_event())
     assert ig.sent == [(IGSID, REEL_UNAVAILABLE_TEXT)]
     assert statuses(db) == ["reel_unavailable"]
 
@@ -319,7 +354,7 @@ def test_reel_oversized_keeps_quota(tmp_path):
     db = str(tmp_path / "bot.db")
     ig = FakeIG(video=b"x" * (2 * 1024 * 1024), media=REEL_MEDIA)
     store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())  # max_video_mb=1
-    w.handle_event(reel_event())
+    w.handle_event(forwarded_reel_event())
     assert ig.sent == [(IGSID, SORRY_TEXT)]
     assert statuses(db) == ["oversized"]
     assert quota_count(db) == 1

@@ -7,7 +7,10 @@ it to a media id via Instagram's public (no-auth) oEmbed endpoint.
 
 import re
 
-OEMBED_URL = "https://www.instagram.com/api/v1/oembed/"
+# Base for the public (no-auth) oEmbed endpoint. The endpoint needs the
+# trailing slash: calling api/v1/oembed (without it) answers with an HTML
+# login wall instead of JSON.
+OEMBED_ENDPOINT = "https://www.instagram.com/api/v1/oembed/"
 
 _PERMALINK = re.compile(r"instagram\.com/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)")
 _SHORT = re.compile(r"instagr\.am/([A-Za-z0-9_-]+)")
@@ -33,10 +36,34 @@ def find_reel_link(message: dict) -> str | None:
     return None
 
 
+_ID_KEYS = ("reel_video_id", "video_id", "media_id")
+
+
+def find_media_id(value) -> str | None:
+    """Direct media id from a forwarded-post attachment, as a fallback when
+    the permalink oEmbed lookup fails. Note: IG keeps two id spaces; a DM's
+    reel_video_id is NOT the same number as the oEmbed media_id for the same
+    reel, and only the latter is verified against the Public Content API."""
+    if isinstance(value, dict):
+        for key in _ID_KEYS:
+            if value.get(key):
+                return str(value[key])
+        for v in value.values():
+            found = find_media_id(v)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for v in value:
+            found = find_media_id(v)
+            if found:
+                return found
+    return None
+
+
 def resolve_media_id(permalink: str, http, timeout: float = 10.0) -> str | None:
     """media_id for a public post via oEmbed, or None on any failure."""
     try:
-        resp = http.get(OEMBED_URL, params={"url": permalink}, timeout=timeout)
+        resp = http.get(OEMBED_ENDPOINT, params={"url": permalink}, timeout=timeout)
         if resp.status_code // 100 != 2:
             return None
         media_id = resp.json().get("media_id")
