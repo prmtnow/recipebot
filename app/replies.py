@@ -10,6 +10,9 @@ SORRY_TEXT = ("Hmm, I couldn't extract a recipe from that video. Make sure it's 
 LIMIT_TEXT = ("You've used your 5 videos for today. Come back tomorrow — "
               "or send me a video you really needed. 🍳")
 BUSY_TEXT = "I'm a bit overwhelmed right now (daily budget spent). Try me again tomorrow!"
+REEL_UNAVAILABLE_TEXT = ("I saw your reel link! Right now I can only watch the video itself "
+                         "when you attach the file to the DM (forwarded posts and private "
+                         "accounts I can't read yet). Thanks for testing! 🍳")
 
 _HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 _BULLETS = {

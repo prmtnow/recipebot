@@ -5,7 +5,8 @@ import pytest
 from app.config import Settings
 from app.extractor import ExtractResult
 from app.ig_client import IGOversized
-from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, MESSAGE_LIMIT, SORRY_TEXT
+from app.replies import (BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, MESSAGE_LIMIT,
+                         REEL_UNAVAILABLE_TEXT, SORRY_TEXT)
 from app.store import Store
 from app.worker import Worker
 
@@ -14,11 +15,13 @@ IGSID = "igsid-1"
 
 
 class FakeIG:
-    def __init__(self, video=b"real-video", download_raises=None):
+    def __init__(self, video=b"real-video", download_raises=None, media=None):
         self.sent = []
         self.downloads = []
+        self.media_lookups = []
         self.video = video
         self.download_raises = download_raises
+        self.media = media  # dict returned by get_media, or None
 
     def download_media(self, url, max_bytes=None):
         self.downloads.append(url)
@@ -28,8 +31,35 @@ class FakeIG:
             raise IGOversized("too big")
         return self.video
 
+    def get_media(self, media_id):
+        self.media_lookups.append(media_id)
+        return self.media
+
     def send_text(self, recipient_id, text):
         self.sent.append((recipient_id, text))
+
+
+class FakeOembedHttp:
+    """Stands in for the public oEmbed endpoint used to resolve reel links."""
+
+    def __init__(self, status=200, body=None):
+        self.status = status
+        self.body = body if body is not None else {"media_id": "3806735077687302895"}
+        self.urls = []
+
+    def get(self, url, params=None, timeout=None):
+        self.urls.append((url, params))
+        outer = self
+
+        class Resp:
+            status_code = outer.status
+
+            def json(self):
+                if not isinstance(outer.body, dict):
+                    raise ValueError("not json")
+                return outer.body
+
+        return Resp()
 
 
 class FakeExtractor:
@@ -63,11 +93,11 @@ def text_event():
     return {"sender": {"id": IGSID}, "message": {"mid": "m1", "text": "hei"}}
 
 
-def build(tmp_path, ig=None, extractor=None, **settings_kw):
+def build(tmp_path, ig=None, extractor=None, http=None, **settings_kw):
     store = Store(str(tmp_path / "bot.db"))
     worker = Worker(store, ig or FakeIG(), extractor or FakeExtractor(
         ExtractResult("# Opskrift", 0.1, None)),
-        make_settings(**settings_kw), today=lambda: DAY)
+        make_settings(**settings_kw), today=lambda: DAY, http=http)
     return store, worker
 
 
@@ -221,3 +251,75 @@ def test_send_failure_on_guard_reply_does_not_crash(tmp_path):
 
     ig.send_text = flaky
     w.handle_event(text_event())  # hint send fails; must not raise
+
+
+def reel_event(url="https://www.instagram.com/reel/ABC123/"):
+    return {"sender": {"id": IGSID}, "message": {
+        "mid": "m1", "text": "hittade den här!",
+        "attachments": [{"type": "share", "payload": {"url": url}}]}}
+
+
+REEL_MEDIA = {"media_type": "VIDEO", "media_url": "https://cdn.example/reel.mp4",
+              "username": "brendan_pang"}
+
+
+def test_forwarded_reel_resolves_downloads_and_replies(tmp_path):
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(media=REEL_MEDIA)
+    http = FakeOembedHttp()
+    store, w = build(tmp_path, ig=ig, http=http)
+    w.handle_event(reel_event())
+    assert http.urls[0][1] == {"url": "https://www.instagram.com/reel/ABC123/"}
+    assert ig.media_lookups == ["3806735077687302895"]
+    assert ig.downloads == ["https://cdn.example/reel.mp4"]
+    assert ig.sent == [(IGSID, "🍳 Opskrift")]
+    assert statuses(db) == ["ok"]
+    assert quota_count(db) == 1
+
+
+def test_pasted_reel_link_works_like_forward(tmp_path):
+    ig = FakeIG(media=REEL_MEDIA)
+    store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())
+    w.handle_event({"sender": {"id": IGSID}, "message": {
+        "mid": "m1", "text": "https://www.instagram.com/reel/ZZ9_aa/"}})
+    assert ig.sent == [(IGSID, "🍳 Opskrift")]
+    assert statuses(db := str(tmp_path / "bot.db")) == ["ok"]
+
+
+def test_reel_oembed_failure_gets_fallback_no_quota(tmp_path):
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(media=REEL_MEDIA)
+    store, w = build(tmp_path, ig=ig, http=FakeOembedHttp(status=404, body="nope"))
+    w.handle_event(reel_event())
+    assert ig.sent == [(IGSID, REEL_UNAVAILABLE_TEXT)]
+    assert ig.media_lookups == []
+    assert quota_count(db) == 0
+    assert statuses(db) == ["reel_unavailable"]
+
+
+def test_reel_unreadable_media_gets_fallback(tmp_path):
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(media=None)  # private account / Standard Access / deleted post
+    store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())
+    w.handle_event(reel_event())
+    assert ig.sent == [(IGSID, REEL_UNAVAILABLE_TEXT)]
+    assert statuses(db) == ["reel_unavailable"]
+
+
+def test_reel_image_post_gets_fallback(tmp_path):
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(media={"media_type": "IMAGE", "media_url": "https://cdn.example/i.jpg"})
+    store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())
+    w.handle_event(reel_event())
+    assert ig.sent == [(IGSID, REEL_UNAVAILABLE_TEXT)]
+    assert statuses(db) == ["reel_unavailable"]
+
+
+def test_reel_oversized_keeps_quota(tmp_path):
+    db = str(tmp_path / "bot.db")
+    ig = FakeIG(video=b"x" * (2 * 1024 * 1024), media=REEL_MEDIA)
+    store, w = build(tmp_path, ig=ig, http=FakeOembedHttp())  # max_video_mb=1
+    w.handle_event(reel_event())
+    assert ig.sent == [(IGSID, SORRY_TEXT)]
+    assert statuses(db) == ["oversized"]
+    assert quota_count(db) == 1

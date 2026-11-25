@@ -137,6 +137,9 @@ def create_app(settings=None, store=None, ig=None, extractor=None, today=None) -
             payload = json.loads(body)
         except ValueError:
             return Response(status_code=200)
+        # Keep one line of raw evidence per delivery: payload shapes (e.g. forwarded
+        # reels) change and are impossible to reconstruct after the fact.
+        logger.info("webhook payload: %.4000s", body.decode("utf-8", "replace"))
         worker = Worker(store_, ig_, extractor_, s, today=today)
         for entry in payload.get("entry", []):
             for event in entry.get("messaging", []):

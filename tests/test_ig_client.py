@@ -66,3 +66,25 @@ def test_download_media_within_cap_returns_bytes():
         data = IGClient("tok", "act-1", http).download_media(
             "https://cdn.example/v.mp4", max_bytes=1000)
     assert data == b"vid"
+
+MEDIA_URL = "https://graph.facebook.com/v23.0/3806735077687302895"
+
+
+@respx.mock
+def test_get_media_returns_json_with_fields_and_token():
+    route = respx.get(MEDIA_URL).mock(return_value=httpx.Response(
+        200, json={"media_type": "VIDEO", "media_url": "https://cdn.example/r.mp4"}))
+    with httpx.Client() as http:
+        media = IGClient("tok", "act-1", http).get_media("3806735077687302895")
+    assert media["media_type"] == "VIDEO"
+    query = httpx.QueryParams(route.calls.last.request.url.query)
+    assert query["fields"] == "media_type,media_url,username"
+    assert query["access_token"] == "tok"
+
+
+@respx.mock
+def test_get_media_returns_none_when_unreadable():
+    respx.get(MEDIA_URL).mock(return_value=httpx.Response(400, json={
+        "error": {"message": "Unsupported get request.", "code": 100}}))
+    with httpx.Client() as http:
+        assert IGClient("tok", "act-1", http).get_media("3806735077687302895") is None

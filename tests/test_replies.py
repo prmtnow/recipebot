@@ -1,4 +1,5 @@
-from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, MESSAGE_LIMIT, SORRY_TEXT, format_recipe
+from app.replies import (BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, MESSAGE_LIMIT,
+                         REEL_UNAVAILABLE_TEXT, SORRY_TEXT, format_recipe)
 
 
 def test_formats_headings_with_emoji_and_bullets():
@@ -58,3 +59,6 @@ def test_reply_copy_is_fixed():
     assert LIMIT_TEXT == ("You've used your 5 videos for today. Come back tomorrow — "
                           "or send me a video you really needed. 🍳")
     assert BUSY_TEXT == "I'm a bit overwhelmed right now (daily budget spent). Try me again tomorrow!"
+
+def test_reel_unavailable_text_fits_one_message():
+    assert len(REEL_UNAVAILABLE_TEXT) <= MESSAGE_LIMIT

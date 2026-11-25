@@ -8,6 +8,7 @@ import urllib.request
 
 SECRET = os.environ.get("APP_SECRET", "62054e2e7c3fc52d01a96e13b42049ac")
 URL = os.environ.get("WEBHOOK_URL", "https://recipebot-jakl.onrender.com/webhook")
+SENDER = os.environ.get("SENDER", "7770001112223334")
 
 payload = {
     "object": "instagram",
@@ -27,7 +28,9 @@ payload = {
                         "attachments": [{
                             "type": "video",
                             "payload": {"video": {
-                                "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+                                "url": os.environ.get(
+                                    "VIDEO_URL",
+                                    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"),
                                 "mime_type": "video/mp4",
                                 "length": 2000000,
                             }},

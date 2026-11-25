@@ -2,7 +2,9 @@ import logging
 from datetime import date
 
 from app.ig_client import IGOversized
-from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, SORRY_TEXT, format_recipe
+from app.reels import find_reel_link, resolve_media_id
+from app.replies import (BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, REEL_UNAVAILABLE_TEXT,
+                         SORRY_TEXT, format_recipe)
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +28,27 @@ def _video_attachment(message: dict):
 class Worker:
     """One DM event in, at most one recipe (or honest failure) out."""
 
-    def __init__(self, store, ig, extractor, settings, today=None):
+    def __init__(self, store, ig, extractor, settings, today=None, http=None):
         self._store = store
         self._ig = ig
         self._extractor = extractor
         self._settings = settings
         self._today = today or (lambda: date.today().isoformat())
+        self._http = http  # for public oEmbed lookups; created lazily
+
+    def _resolve_reel(self, link: str) -> str | None:
+        """Playable URL for a reel permalink, or None when it can't be read."""
+        if self._http is None:
+            import httpx
+
+            self._http = httpx.Client(timeout=15.0)
+        media_id = resolve_media_id(link, self._http)
+        if media_id is None:
+            return None
+        media = self._ig.get_media(media_id)
+        if not media or media.get("media_type") not in ("VIDEO", "REEL"):
+            return None
+        return media.get("media_url")
 
     def handle_event(self, message: dict) -> None:
         store, settings = self._store, self._settings
@@ -61,9 +78,17 @@ class Worker:
 
         att = _video_attachment(msg)
         if att is None:
-            reply(HINT_TEXT, "non_video")
-            return
-        url, mime, size = att
+            link = find_reel_link(msg)
+            if link is None:
+                reply(HINT_TEXT, "non_video")
+                return
+            url = self._resolve_reel(link)
+            if url is None:
+                reply(REEL_UNAVAILABLE_TEXT, "reel_unavailable")
+                return
+            mime, size = "video/mp4", None  # a reel's size is only known by downloading
+        else:
+            url, mime, size = att
 
         max_bytes = settings.max_video_mb * 1_048_576
         if size and size > max_bytes:

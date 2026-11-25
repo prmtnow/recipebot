@@ -134,3 +134,13 @@ def test_webhook_returns_200_even_when_processing_fails(tmp_path):
     resp = client.post("/webhook", content=body, headers={
         "X-Hub-Signature-256": sign(body), "Content-Type": "application/json"})
     assert resp.status_code == 200
+
+def test_valid_delivery_logs_raw_payload(tmp_path, caplog):
+    import logging
+    client, ig, store = make_app(tmp_path)
+    body = json.dumps(video_payload()).encode()
+    with caplog.at_level(logging.INFO, logger="app.main"):
+        client.post("/webhook", content=body,
+                    headers={"X-Hub-Signature-256": sign(body)})
+    assert any("webhook payload" in r.message and "igsid-1" in r.getMessage()
+               for r in caplog.records)

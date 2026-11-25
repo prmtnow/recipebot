@@ -33,6 +33,20 @@ class IGClient:
                     raise IGOversized(f"media exceeds {max_bytes} bytes")
             return bytes(buf)
 
+    def get_media(self, media_id: str) -> dict | None:
+        """Public Content API lookup: type and playable URL for any public media.
+
+        Returns None when the object is unreadable (private account, deleted
+        post, or our access is still Standard-level).
+        """
+        resp = self._http.get(
+            f"https://graph.facebook.com/v23.0/{media_id}",
+            params={"fields": "media_type,media_url,username", "access_token": self._token},
+        )
+        if resp.status_code // 100 != 2:
+            return None
+        return resp.json()
+
     def send_text(self, recipient_id: str, text: str) -> None:
         resp = self._http.post(
             f"https://graph.facebook.com/v23.0/{self._ig_account_id}/messages",
