@@ -2,7 +2,7 @@ import logging
 from datetime import date
 
 from app.ig_client import IGOversized
-from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, MSG_CHUNK_CHARS, SORRY_TEXT, chunk_recipe
+from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, SORRY_TEXT, format_recipe
 
 logger = logging.getLogger(__name__)
 
@@ -93,5 +93,4 @@ class Worker:
             return
 
         record("ok", result.recipe, result.cost_usd)  # count spend before sending
-        for chunk in chunk_recipe(result.recipe, MSG_CHUNK_CHARS):
-            send(chunk)
+        send(format_recipe(result.recipe))

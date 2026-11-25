@@ -150,3 +150,9 @@ def test_cost_survives_response_parsing_failure():
     assert r.recipe is None
     assert r.error
     assert r.cost_usd > 0
+
+
+def test_prompt_requires_one_compact_plain_message():
+    from app.extractor import PROMPT
+    assert 'one single message' in PROMPT
+    assert 'no bold' in PROMPT

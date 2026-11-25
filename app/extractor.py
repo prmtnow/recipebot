@@ -12,6 +12,8 @@ PROMPT = (
     "(quantities + unit per line; estimate amounts shown or said, never invent)\n"
     "## Framgangsmåte / Method\n"
     "(numbered steps with times and temperatures as shown or said)\n"
+    "Your answer is sent as one single message in an Instagram DM: keep it "
+    "compact (under 1300 characters), no bold, no links, no extra commentary.\n"
     "Write in the language spoken in the video; if unclear, write in English.\n"
     "If the video is not a cooking video or the recipe cannot be determined,\n"
     "respond with exactly: NO_RECIPE"

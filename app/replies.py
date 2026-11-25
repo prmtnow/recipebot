@@ -1,6 +1,7 @@
 import re
 
-MSG_CHUNK_CHARS = 1800
+# Instagram's hard limit for one text message; replies are sent as a single DM.
+MESSAGE_LIMIT = 2000
 
 HINT_TEXT = ("Send me a cooking video as a DM and I'll reply with the full recipe! "
              "🍳 (max 5 videos/day)")
@@ -10,41 +11,51 @@ LIMIT_TEXT = ("You've used your 5 videos for today. Come back tomorrow — "
               "or send me a video you really needed. 🍳")
 BUSY_TEXT = "I'm a bit overwhelmed right now (daily budget spent). Try me again tomorrow!"
 
-# Split preference: before a "## " header, before a numbered/bulleted step,
-# before a blank line, then a hard cut.
-_SPLIT_PATTERNS = [
-    re.compile(r"\n(?=## )"),
-    re.compile(r"\n(?=(?:\d+\.|-) )"),
-    re.compile(r"\n(?=\n)"),
-]
+_HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+_BULLETS = {
+    "ingredients": ("🧺", ("ingrediens", "ingredient")),
+    "method": ("📝", ("framgangsmåte", "method", "steg", "step", "så här", "tillagning")),
+}
 
 
-def chunk_recipe(recipe: str, max_chars: int) -> list[str]:
-    """Split a recipe into at most 2 messages, never dropping text.
+def _heading_line(text: str, first: bool) -> str:
+    """Map a markdown heading to a DM-friendly emoji section header."""
+    if first:
+        return f"🍳 {text}"
+    lowered = text.lower()
+    for emoji, keywords in _BULLETS.values():
+        if any(k in lowered for k in keywords):
+            return f"{emoji} {text}"
+    return text  # unknown section: plain, never invent an emoji
 
-    The first chunk ends at the best boundary within max_chars; the second
-    chunk carries the whole remainder even if it exceeds max_chars (a long
-    message beats a dropped ingredient list).
+
+def format_recipe(recipe: str, limit: int = MESSAGE_LIMIT) -> str:
+    """Turn the extractor's markdown into one clean, plain-text DM message.
+
+    Instagram DMs render no markdown, so headings become emoji headers,
+    bullets become •, bold markers are stripped, blank lines are collapsed,
+    and anything over the API limit is cut at a line boundary with an ellipsis.
     """
-    if len(recipe) <= max_chars:
-        return [recipe]
-    min_cut = len(recipe) - max_chars  # so the second chunk also fits
-
-    def best(pattern: re.Pattern, low: int, high: int):
-        candidates = [m.start() for m in pattern.finditer(recipe) if low <= m.start() < high]
-        return max(candidates) + 1 if candidates else None  # split after the newline
-
-    cut = None
-    for pattern in _SPLIT_PATTERNS:
-        cut = best(pattern, min_cut, max_chars)
-        if cut:
-            break
-    if cut is None:  # no boundary lets both chunks fit; keep content priority
-        for pattern in _SPLIT_PATTERNS:
-            cut = best(pattern, 0, max_chars)
-            if cut:
-                break
-    if cut is None:
-        cut = max_chars
-    first, rest = recipe[:cut].rstrip("\n"), recipe[cut:].lstrip("\n")
-    return [first, rest]
+    lines = []
+    seen_heading = False
+    for raw in recipe.replace("**", "").splitlines():
+        line = raw.rstrip()
+        m = _HEADING.match(line)
+        if m:
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines.append(_heading_line(m.group(1).strip(), first=not seen_heading))
+            seen_heading = True
+            continue
+        stripped = line.lstrip()
+        if stripped.startswith(("- ", "* ")):
+            lines.append("• " + stripped[2:])
+        elif not line and (not lines or lines[-1] == ""):
+            continue  # collapse runs of blank lines
+        else:
+            lines.append(line)
+    text = "\n".join(lines).strip("\n")
+    if len(text) > limit:
+        cut = text.rfind("\n", 0, limit - 1)
+        text = (text[:cut] if cut > 0 else text[: limit - 1]).rstrip("\n") + "…"
+    return text

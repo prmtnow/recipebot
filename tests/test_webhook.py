@@ -92,7 +92,7 @@ def test_post_valid_signature_processes_event(tmp_path):
     resp = client.post("/webhook", content=body, headers={
         "X-Hub-Signature-256": sign(body), "Content-Type": "application/json"})
     assert resp.status_code == 200
-    assert ig.sent == [("igsid-1", "# Brød\n1. Bland deig")]
+    assert ig.sent == [("igsid-1", "🍳 Brød\n1. Bland deig")]
     assert store.today_cost(DAY) > 0
 
 

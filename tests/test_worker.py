@@ -5,7 +5,7 @@ import pytest
 from app.config import Settings
 from app.extractor import ExtractResult
 from app.ig_client import IGOversized
-from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, SORRY_TEXT
+from app.replies import BUSY_TEXT, HINT_TEXT, LIMIT_TEXT, MESSAGE_LIMIT, SORRY_TEXT
 from app.store import Store
 from app.worker import Worker
 
@@ -87,7 +87,7 @@ def test_happy_path_sends_recipe_and_logs(tmp_path):
     ig = FakeIG()
     store, w = build(tmp_path, ig=ig)
     w.handle_event(video_event())
-    assert ig.sent == [(IGSID, "# Opskrift")]
+    assert ig.sent == [(IGSID, "🍳 Opskrift")]
     assert statuses(db) == ["ok"]
     assert quota_count(db) == 1
     assert store.today_cost(DAY) == pytest.approx(0.1)
@@ -170,14 +170,15 @@ def test_extraction_failure_sorry_quota_consumed_no_invention(tmp_path, error):
     assert quota_count(db) == 1
 
 
-def test_long_recipe_sends_two_chunks_in_order(tmp_path):
-    recipe = "## Ret\n" + "\n".join(f"{i}. trinn nummer {i} med tekst" for i in range(300))
+def test_long_recipe_sends_one_truncated_message(tmp_path):
+    recipe = "## Ret\n## Steg\n" + "\n".join(f"{i}. trinn nummer {i} med tekst" for i in range(300))
     ig = FakeIG()
     store, w = build(tmp_path, ig=ig, extractor=FakeExtractor(ExtractResult(recipe, 0.1, None)))
     w.handle_event(video_event())
     texts = [t for _, t in ig.sent]
-    assert len(texts) == 2
-    assert recipe.split("\n") == [ln for c in texts for ln in c.split("\n") if ln]
+    assert len(texts) == 1
+    assert len(texts[0]) <= MESSAGE_LIMIT
+    assert texts[0].endswith("…")
 
 
 def test_send_failure_after_extraction_still_records_cost_and_log(tmp_path):
